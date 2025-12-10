@@ -10,8 +10,8 @@ if (!rootElement) {
   console.error('Failed to find the root element');
 } else {
   createRoot(rootElement).render(
-    <StrictMode>
-      <App />
-    </StrictMode>,
-  )
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
 }
