@@ -46,14 +46,17 @@ class SimpleRAG:
         
         # 출처 포맷팅
         sources = []
+        contexts = []
         for doc in result.get("context", []):
             sources.append({
                 "source": doc.metadata.get("source", "unknown"),
                 "page": 0,
                 "content": doc.page_content[:100] + "..."
             })
+            contexts.append(doc.page_content)
             
         return {
             "answer": result.get("answer", ""),
-            "sources": sources
+            "sources": sources,
+            "contexts": contexts
         }

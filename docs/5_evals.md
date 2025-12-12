@@ -68,4 +68,3 @@ Chat API(RAG 파이프라인)의 성능을 객관적으로 측정하고 개선�
 2.  **실행 (Inference)**: 테스트 데이터셋의 `question`을 RAG API에 전송하여 `answer`와 `contexts`를 수집.
 3.  **평가 (Evaluation)**: 수집된 데이터(`question`, `answer`, `contexts`, `ground_truth`)를 RAGAS 라이브러리에 입력하여 점수 산출.
 4.  **분석 (Analysis)**: 점수가 낮은 항목을 분석하여 검색(Retrieval) 문제인지 생성(Generation) 문제인지 파악 후 튜닝.
-
