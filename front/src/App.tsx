@@ -1,207 +1,278 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Upload, FileText, Loader2, BookOpen, Bot, Zap } from 'lucide-react';
-import { ingestDocument, sendChatQuery, type ChatResponse, type SourceInfo, type ChatMode } from './api';
-import './App.css';
+import { useState, useRef } from 'react'
+import { Send, Upload, FileText, Loader2, Bot, User, CheckCircle2, AlertCircle } from 'lucide-react'
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
+
+// API Base URL
+const API_URL = "http://localhost:8000"
 
 interface Message {
-  role: 'user' | 'assistant';
-  content: string;
-  sources?: SourceInfo[];
-  mode?: ChatMode; // 답변이 생성된 모드 표시
+  role: 'user' | 'assistant'
+  content: string
+  sources?: Source[]
+  contexts?: string[] // For simple RAG
+}
+
+interface Source {
+  source: string
+  page: number
+  content: string
 }
 
 function App() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [chatMode, setChatMode] = useState<ChatMode>('simple'); // 채팅 모드 상태
+  const [file, setFile] = useState<File | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const [uploadMessage, setUploadMessage] = useState('')
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [query, setQuery] = useState('')
+  const [messages, setMessages] = useState<Message[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+  
+  // 'simple' or 'agentic'
+  const [mode, setMode] = useState('simple')
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setFile(e.target.files[0])
+      setUploadStatus('idle')
+      setUploadMessage('')
+    }
+  }
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const handleUpload = async () => {
+    if (!file) return
 
-    setIsUploading(true);
+    setIsUploading(true)
+    const formData = new FormData()
+    formData.append('file', file)
+
     try {
-      const result = await ingestDocument(file);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: `✅ 문서 "${result.filename}"가 성공적으로 업로드되었습니다. (${result.chunks_count} chunks)`,
-        },
-      ]);
-    } catch (error) {
-      console.error('Upload failed:', error);
-      alert('문서 업로드 중 오류가 발생했습니다.');
+      const res = await fetch(`${API_URL}/ingest`, {
+        method: 'POST',
+        body: formData,
+      })
+      const data = await res.json()
+      
+      if (!res.ok) throw new Error(data.detail || 'Upload failed')
+
+      setUploadStatus('success')
+      setUploadMessage(`Successfully ingested: ${data.filename} (${data.chunks_count} chunks)`)
+    } catch (err: any) {
+      console.error(err)
+      setUploadStatus('error')
+      setUploadMessage(err.message)
     } finally {
-      setIsUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+      setIsUploading(false)
+    }
+  }
+
+  const handleChat = async () => {
+    if (!query.trim()) return
+
+    const userMsg: Message = { role: 'user', content: query }
+    setMessages(prev => [...prev, userMsg])
+    setQuery('')
+    setIsLoading(true)
+
+    try {
+      const endpoint = mode === 'simple' ? '/chat/simple' : '/chat/agentic'
+      const res = await fetch(`${API_URL}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: userMsg.content }),
+      })
+      const data = await res.json()
+
+      if (!res.ok) throw new Error(data.detail || 'Chat failed')
+
+      const assistantMsg: Message = {
+        role: 'assistant',
+        content: data.answer,
+        sources: data.sources,
+        contexts: data.contexts
       }
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || isLoading) return;
-
-    const userMessage = input;
-    const currentMode = chatMode;
-
-    setInput('');
-    setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
-    setIsLoading(true);
-
-    try {
-      // 선택된 모드로 API 호출
-      const response: ChatResponse = await sendChatQuery(userMessage, currentMode);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: response.answer,
-          sources: response.sources,
-          mode: currentMode,
-        },
-      ]);
-    } catch (error) {
-      console.error('Chat failed:', error);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: '죄송합니다. 답변을 생성하는 중 오류가 발생했습니다.',
-        },
-      ]);
+      setMessages(prev => [...prev, assistantMsg])
+    } catch (err: any) {
+      console.error(err)
+      setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${err.message}` }])
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  };
+  }
 
   return (
-    <div className="app-container">
-      <header className="header">
-        <h1>📑 RAG Document Chat</h1>
-        <div className="header-actions">
-          {/* 모드 선택 토글 */}
-          <div className="mode-toggle">
-            <button
-              className={`mode-btn ${chatMode === 'simple' ? 'active' : ''}`}
-              onClick={() => setChatMode('simple')}
-              title="빠른 응답, 단순 검색"
-            >
-              <Zap size={16} /> Simple
-            </button>
-            <button
-              className={`mode-btn ${chatMode === 'agentic' ? 'active' : ''}`}
-              onClick={() => setChatMode('agentic')}
-              title="심층 추론, 에이전트 검색"
-            >
-              <Bot size={16} /> Agentic
-            </button>
-          </div>
-
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileUpload}
-            accept=".pdf"
-            style={{ display: 'none' }}
-          />
-          <button
-            className="upload-btn"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-          >
-            {isUploading ? (
-              <Loader2 className="icon spin" />
-            ) : (
-              <Upload className="icon" />
-            )}
-            Upload PDF
-          </button>
+    <div className="container mx-auto p-4 max-w-5xl h-screen flex flex-col gap-4">
+      <header className="flex items-center justify-between py-4 border-b">
+        <h1 className="text-2xl font-bold flex items-center gap-2">
+          <Bot className="w-8 h-8" />
+          RAG Evaluation Workbench
+        </h1>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span>Server: {API_URL}</span>
         </div>
       </header>
 
-      <main className="chat-container">
-        {messages.length === 0 ? (
-          <div className="empty-state">
-            <FileText className="empty-icon" />
-            <h2>문서를 업로드하고 질문해 보세요!</h2>
-            <p>PDF 파일을 업로드하면 AI가 내용을 분석하여 답변해 드립니다.</p>
-            <div className="mode-info">
-              <span className="badge simple"><Zap size={14}/> Simple Mode</span>: 빠른 검색과 답변
-              <span className="badge agentic"><Bot size={14}/> Agentic Mode</span>: 에이전트 기반 심층 분석
-            </div>
-          </div>
-        ) : (
-          <div className="messages-list">
-            {messages.map((msg, index) => (
-              <div key={index} className={`message ${msg.role}`}>
-                <div className="message-content">
-                  {msg.role === 'assistant' && msg.mode && (
-                    <div className={`mode-badge ${msg.mode}`}>
-                      {msg.mode === 'simple' ? <Zap size={12}/> : <Bot size={12}/>}
-                      {msg.mode === 'simple' ? 'Simple' : 'Agentic'}
-                    </div>
-                  )}
-                  <p>{msg.content}</p>
-                  
-                  {msg.sources && msg.sources.length > 0 && (
-                    <div className="sources-section">
-                      <h4><BookOpen className="icon-small" /> 참고 문헌</h4>
-                      <div className="sources-list">
-                        {msg.sources.map((source, idx) => (
-                          <div key={idx} className="source-item">
-                            <span className="source-title">{source.source} (p.{source.page})</span>
-                            <p className="source-preview">{source.content}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
+      <div className="grid grid-cols-1 md:grid-cols-[300px_1fr] gap-6 flex-1 overflow-hidden">
+        {/* Sidebar: Upload & Settings */}
+        <div className="flex flex-col gap-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Document Ingestion</CardTitle>
+              <CardDescription>Upload PDF to RAG system</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid w-full max-w-sm items-center gap-1.5">
+                <Input 
+                  ref={fileInputRef}
+                  id="pdf-upload" 
+                  type="file" 
+                  accept=".pdf"
+                  onChange={handleFileChange} 
+                />
               </div>
-            ))}
-            {isLoading && (
-              <div className="message assistant">
-                <div className="message-content loading">
-                  <Loader2 className="icon spin" /> 
-                  {chatMode === 'agentic' ? '에이전트가 생각 중입니다...' : '답변 생성 중...'}
+              <Button 
+                onClick={handleUpload} 
+                disabled={!file || isUploading} 
+                className="w-full"
+              >
+                {isUploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                Ingest Document
+              </Button>
+
+              {uploadStatus === 'success' && (
+                <div className="p-3 bg-green-50 text-green-700 rounded-md text-sm flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 mt-0.5" />
+                  <span>{uploadMessage}</span>
                 </div>
+              )}
+              {uploadStatus === 'error' && (
+                <div className="p-3 bg-red-50 text-red-700 rounded-md text-sm flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5" />
+                  <span>{uploadMessage}</span>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="flex-1 flex flex-col">
+            <CardHeader>
+              <CardTitle>System Status</CardTitle>
+            </CardHeader>
+            <CardContent className="flex-1">
+              <div className="text-sm text-muted-foreground space-y-2">
+                <p>Mode: <span className="font-semibold text-foreground capitalize">{mode} RAG</span></p>
+                <p>Vector DB: <span className="font-semibold text-foreground">Chroma</span></p>
+                <p>Embedding: <span className="font-semibold text-foreground">Gemini-001</span></p>
+                <p>LLM: <span className="font-semibold text-foreground">Gemini-2.5-Flash</span></p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Main Chat Area */}
+        <div className="flex flex-col h-full overflow-hidden border rounded-lg bg-background shadow-sm">
+          <div className="p-4 border-b bg-muted/40">
+            <Tabs value={mode} onValueChange={setMode} className="w-[400px]">
+              <TabsList>
+                <TabsTrigger value="simple">Simple RAG (Retrieve-Read)</TabsTrigger>
+                <TabsTrigger value="agentic">Agentic RAG (LangGraph)</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {messages.length === 0 && (
+              <div className="h-full flex flex-col items-center justify-center text-muted-foreground opacity-50">
+                <Bot className="w-16 h-16 mb-4" />
+                <p>Upload a document and start chatting!</p>
               </div>
             )}
-            <div ref={messagesEndRef} />
-          </div>
-        )}
-      </main>
+            
+            {messages.map((msg, idx) => (
+              <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                {msg.role === 'assistant' && (
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <Bot className="w-5 h-5 text-primary" />
+                  </div>
+                )}
+                
+                <div className={`max-w-[80%] space-y-2`}>
+                  <div className={`p-3 rounded-lg ${
+                    msg.role === 'user' 
+                      ? 'bg-primary text-primary-foreground' 
+                      : 'bg-muted/50 border'
+                  }`}>
+                    <p className="whitespace-pre-wrap">{msg.content}</p>
+                  </div>
 
-      <form className="input-area" onSubmit={handleSubmit}>
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={chatMode === 'agentic' ? "복잡한 질문도 가능합니다..." : "빠르게 질문하세요..."}
-          disabled={isLoading}
-        />
-        <button type="submit" disabled={!input.trim() || isLoading}>
-          <Send className="icon" />
-        </button>
-      </form>
+                  {/* Sources Display for Assistant */}
+                  {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
+                    <div className="text-xs bg-card border rounded p-2 space-y-1">
+                      <p className="font-semibold flex items-center gap-1 text-muted-foreground">
+                        <FileText className="w-3 h-3" /> Sources:
+                      </p>
+                      <ul className="space-y-1">
+                        {msg.sources.map((src, i) => (
+                          <li key={i} className="text-muted-foreground">
+                            <span className="font-medium text-foreground">{src.source}</span> (p.{src.page})
+                            {/* <div className="pl-2 border-l-2 border-muted mt-1 opacity-75 line-clamp-2">"{src.content}"</div> */}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+
+                {msg.role === 'user' && (
+                  <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center flex-shrink-0">
+                    <User className="w-5 h-5" />
+                  </div>
+                )}
+              </div>
+            ))}
+            
+            {isLoading && (
+              <div className="flex gap-3">
+                 <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <Bot className="w-5 h-5 text-primary" />
+                  </div>
+                  <div className="bg-muted/50 border p-3 rounded-lg flex items-center">
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    Thinking...
+                  </div>
+              </div>
+            )}
+          </div>
+
+          <div className="p-4 border-t bg-background">
+            <div className="flex gap-2">
+              <Textarea 
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    handleChat()
+                  }
+                }}
+                placeholder="Ask a question about your documents..."
+                className="min-h-[50px] max-h-[150px]"
+              />
+              <Button onClick={handleChat} disabled={isLoading || !query.trim()} className="h-auto">
+                <Send className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
-  );
+  )
 }
 
-export default App;
+export default App

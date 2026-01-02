@@ -1,2 +1,5 @@
-# rag-evals-ragas
-RAGAS 예제
+# agentic rag evals
+
+- RAG, Agentic RAG, and their evaluations
+
+- A simple demo page for testing RAG & Agentic RAG
